@@ -1036,7 +1036,12 @@ public class BukkitServerPlayer extends BukkitLivingEntity implements Player {
     }
 
     private void updateMiningAim(Object serverPlayer) {
-        if (!Config.preemptiveMiningSpeedSync()) {
+        boolean preemptiveSync = Config.preemptiveMiningSpeedSync();
+        if ((preemptiveSync || this.miningAimOwnsSuppression) && PlayerActionListener.isMiningCooldownActive(this)) {
+            this.miningAimEye = null;
+            return;
+        }
+        if (!preemptiveSync) {
             if (this.miningAimOwnsSuppression && !this.isDestroyingCustomBlock) {
                 this.setClientSideCanBreakBlock(true);
             }

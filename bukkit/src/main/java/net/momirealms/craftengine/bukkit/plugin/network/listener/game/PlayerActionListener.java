@@ -40,6 +40,15 @@ public final class PlayerActionListener implements ByteBufferPacketListener {
 
     private PlayerActionListener() {}
 
+    public static boolean isMiningCooldownActive(BukkitServerPlayer player) {
+        Channel channel = player.nettyChannel();
+        if (channel == null || !channel.hasAttr(MINING_COOLDOWN)) {
+            return false;
+        }
+        MiningCooldown cooldown = channel.attr(MINING_COOLDOWN).get();
+        return cooldown != null && cooldown.world == player.platformPlayer().getWorld();
+    }
+
     public static void startMiningCooldown(BukkitServerPlayer player) {
         Channel channel = player.nettyChannel();
         if (channel == null || !channel.isOpen()) {
