@@ -14,6 +14,7 @@ import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.kyori.adventure.text.Component;
 import net.momirealms.craftengine.bukkit.api.BukkitAdaptor;
 import net.momirealms.craftengine.bukkit.api.CraftEngineFurniture;
+import net.momirealms.craftengine.bukkit.block.BukkitBlockManager;
 import net.momirealms.craftengine.bukkit.block.entity.renderer.display.BukkitDestroyStageDisplayRecorder;
 import net.momirealms.craftengine.bukkit.entity.BukkitLivingEntity;
 import net.momirealms.craftengine.bukkit.entity.furniture.BukkitFurniture;
@@ -92,6 +93,7 @@ import net.momirealms.craftengine.proxy.minecraft.server.network.ServerConfigura
 import net.momirealms.craftengine.proxy.minecraft.server.network.ServerGamePacketListenerImplProxy;
 import net.momirealms.craftengine.proxy.minecraft.server.network.config.JoinWorldTaskProxy;
 import net.momirealms.craftengine.proxy.minecraft.server.network.config.ServerResourcePackConfigurationTaskProxy;
+import net.momirealms.craftengine.proxy.minecraft.sounds.SoundEventProxy;
 import net.momirealms.craftengine.proxy.minecraft.sounds.SoundSourceProxy;
 import net.momirealms.craftengine.proxy.minecraft.util.thread.BlockableEventLoopProxy;
 import net.momirealms.craftengine.proxy.minecraft.world.InteractionHandProxy;
@@ -1275,14 +1277,20 @@ public class BukkitServerPlayer extends BukkitLivingEntity implements Player {
             if (!BukkitItemUtils.isDebugStick(item) && !canInstabuild()) {
                 Object soundType = BlockBehaviourProxy.BlockStateBaseProxy.INSTANCE.getSoundType(destroyedState);
                 Object soundEvent = SoundTypeProxy.INSTANCE.getHitSound(soundType);
-                Object soundPacket = ClientboundSoundPacketProxy.INSTANCE.newInstance(
-                        HolderProxy.INSTANCE.direct(soundEvent),
-                        SoundSourceProxy.BLOCKS,
-                        hitPos.x(), hitPos.y(), hitPos.z(),
-                        0.5F, 0.5F,
-                        RandomUtils.generateRandomLong()
-                );
-                sendPacket(soundPacket, true);
+                ImmutableBlockState customState = BlockStateUtils.getNullableCustomBlockState(destroyedState);
+                if (customState != null || (Config.enableSoundSystem()
+                        && BukkitBlockManager.instance().isHitSoundMissing(SoundEventProxy.INSTANCE.getLocation(soundEvent)))) {
+                    SoundData hitSound = customState == null ? null : customState.settings().sounds().hitSound();
+                    Object soundPacket = ClientboundSoundPacketProxy.INSTANCE.newInstance(
+                            HolderProxy.INSTANCE.direct(soundEvent),
+                            SoundSourceProxy.BLOCKS,
+                            hitPos.x() + 0.5, hitPos.y() + 0.5, hitPos.z() + 0.5,
+                            hitSound == null ? 0.5F : hitSound.volume().get(),
+                            hitSound == null ? 0.5F : hitSound.pitch().get(),
+                            RandomUtils.generateRandomLong()
+                    );
+                    this.sendPacket(soundPacket, true);
+                }
             }
             this.lastHitBlockTime = currentTick;
         }

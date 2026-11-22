@@ -9,7 +9,7 @@ public final class BlockSounds {
     Fall 0.5 0.75
     Place 1 0.8
     Step 0.15 1
-    Hit 0.5 0.5
+    Hit 0.25 0.5
     Break 1 0.8
     Land 0.3 1
     Destroy 1 1
@@ -37,7 +37,7 @@ public final class BlockSounds {
                 section.getValue("break", v -> SoundData.fromConfig(v, SoundData.SoundValue.FIXED_1, SoundData.SoundValue.FIXED_0_8), EMPTY_SOUND),
                 section.getValue("step", v -> SoundData.fromConfig(v, SoundData.SoundValue.FIXED_0_15, SoundData.SoundValue.FIXED_1), EMPTY_SOUND),
                 section.getValue("place", v -> SoundData.fromConfig(v, SoundData.SoundValue.FIXED_1, SoundData.SoundValue.FIXED_0_8), EMPTY_SOUND),
-                section.getValue("hit", v -> SoundData.fromConfig(v, SoundData.SoundValue.FIXED_0_5, SoundData.SoundValue.FIXED_0_5), EMPTY_SOUND),
+                section.getValue("hit", v -> SoundData.fromConfig(v, SoundData.SoundValue.FIXED_0_25, SoundData.SoundValue.FIXED_0_5), EMPTY_SOUND),
                 section.getValue("fall", v -> SoundData.fromConfig(v, SoundData.SoundValue.FIXED_0_5, SoundData.SoundValue.FIXED_0_75), EMPTY_SOUND)
         );
     }

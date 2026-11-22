@@ -41,6 +41,7 @@ public record SoundData(Key id, SoundValue volume, SoundValue pitch) {
         SoundValue FIXED_0_75 = new Fixed(0.75f);
         SoundValue FIXED_0_15 = new Fixed(0.15f);
         SoundValue FIXED_0_5 = new Fixed(0.5f);
+        SoundValue FIXED_0_25 = new Fixed(0.25f);
         SoundValue RANGED_0_9_1 = new Ranged(0.9f, 1f);
 
         static SoundValue fromConfig(ConfigValue config) {
