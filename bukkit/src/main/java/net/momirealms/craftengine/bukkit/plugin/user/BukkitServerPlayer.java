@@ -29,6 +29,7 @@ import net.momirealms.craftengine.bukkit.plugin.network.handler.SelfPlayerPacket
 import net.momirealms.craftengine.bukkit.plugin.network.listener.game.PlayerActionListener;
 import net.momirealms.craftengine.bukkit.util.*;
 import net.momirealms.craftengine.bukkit.world.BukkitContainer;
+import net.momirealms.craftengine.bukkit.world.BukkitWorldManager;
 import net.momirealms.craftengine.bukkit.world.WorldlyContainerHolder;
 import net.momirealms.craftengine.core.advancement.AdvancementType;
 import net.momirealms.craftengine.core.attribute.damage.DamageVisibility;
@@ -71,6 +72,8 @@ import net.momirealms.craftengine.core.sound.SoundSource;
 import net.momirealms.craftengine.core.util.*;
 import net.momirealms.craftengine.core.util.random.RandomUtils;
 import net.momirealms.craftengine.core.world.*;
+import net.momirealms.craftengine.core.world.chunk.CEChunk;
+import net.momirealms.craftengine.core.world.chunk.CESection;
 import net.momirealms.craftengine.core.world.chunk.client.ClientChunk;
 import net.momirealms.craftengine.core.world.collision.AABB;
 import net.momirealms.craftengine.proxy.bukkit.craftbukkit.CraftWorldProxy;
@@ -95,6 +98,7 @@ import net.momirealms.craftengine.proxy.minecraft.world.InteractionHandProxy;
 import net.momirealms.craftengine.proxy.minecraft.world.effect.MobEffectsProxy;
 import net.momirealms.craftengine.proxy.minecraft.world.entity.EntityProxy;
 import net.momirealms.craftengine.proxy.minecraft.world.entity.EntityTypesProxy;
+import net.momirealms.craftengine.proxy.minecraft.world.entity.EquipmentSlotProxy;
 import net.momirealms.craftengine.proxy.minecraft.world.entity.LivingEntityProxy;
 import net.momirealms.craftengine.proxy.minecraft.world.entity.ai.attributes.AttributeInstanceProxy;
 import net.momirealms.craftengine.proxy.minecraft.world.entity.ai.attributes.AttributesProxy;
@@ -111,9 +115,11 @@ import net.momirealms.craftengine.proxy.minecraft.world.level.ClipContextProxy;
 import net.momirealms.craftengine.proxy.minecraft.world.level.block.SoundTypeProxy;
 import net.momirealms.craftengine.proxy.minecraft.world.level.block.state.BlockBehaviourProxy;
 import net.momirealms.craftengine.proxy.minecraft.world.level.chunk.ChunkSourceProxy;
+import net.momirealms.craftengine.proxy.minecraft.world.phys.AABBProxy;
 import net.momirealms.craftengine.proxy.minecraft.world.phys.BlockHitResultProxy;
 import net.momirealms.craftengine.proxy.minecraft.world.phys.Vec3Proxy;
 import net.momirealms.craftengine.proxy.paper.chunk.system.entity.RegionizedPlayerChunkLoaderProxy;
+import net.momirealms.craftengine.proxy.spottedleaf.moonrise.common.util.TickThreadProxy;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Particle;
@@ -196,6 +202,15 @@ public class BukkitServerPlayer extends BukkitLivingEntity implements Player {
     private IntIdentityList biomeList;
     private boolean needsBlockStateBitWidthConversion = MiscUtils.ceilLog2(this.blockList.size()) != MiscUtils.ceilLog2(RegistryUtils.currentBlockRegistrySize());
     // cache if player can break blocks
+    private boolean miningAimOwnsSuppression;
+    private boolean miningAimCanBreak = true;
+    private Vec3d miningAimEye;
+    private Object miningAimLevel;
+    private Object miningAimTool;
+    private float miningAimYaw;
+    private float miningAimPitch;
+    private double miningAimRange;
+    private Object miningTickHit;
     private boolean clientSideCanBreak = true;
     // 血量缩放：最近一次 UpdateAttributes 包内算出的客户端可见血量上限，-1 表示未知
     private double clientSideMaxHealth = 20;
@@ -789,6 +804,7 @@ public class BukkitServerPlayer extends BukkitLivingEntity implements Player {
             this.eyeLocation = getEyePos(serverPlayer);
         }
 
+        this.miningTickHit = null;
         // 本tick内有挥手
         if (hasSwingHand()) {
             if (this.gameTicks - this.preventBreakTick >= 3) {
@@ -802,6 +818,7 @@ public class BukkitServerPlayer extends BukkitLivingEntity implements Player {
                         if (++this.awfulBreakFixer >= 4 && !isAdventureMode()) {
                             this.awfulBreakFixer = 0;
                             Object hitResult = rayTrace(serverPlayer, getCachedInteractionRange());
+                            this.miningTickHit = hitResult;
                             if (!BlockHitResultProxy.INSTANCE.isMiss(hitResult)) {
                                 Object blockPos = BlockHitResultProxy.INSTANCE.getBlockPos(hitResult);
                                 BlockPos hitPos = LocationUtils.fromBlockPos(blockPos);
@@ -816,6 +833,7 @@ public class BukkitServerPlayer extends BukkitLivingEntity implements Player {
             this.swingHandAck = false;
         }
 
+        this.updateMiningAim(serverPlayer);
         // 实体剔除更新相机位置
         if (Config.enableEntityCulling()) {
             this.firstPersonCameraVec3 = this.eyeLocation;
@@ -1011,6 +1029,131 @@ public class BukkitServerPlayer extends BukkitLivingEntity implements Player {
 
         // 对于原版方块不影响属性，对于自定义方块需要影响
         setClientSideCanBreakBlock(!custom || canInstantBreak);
+        this.miningAimOwnsSuppression = VersionHelper.isOrAbove1_20_5 && Config.preemptiveMiningSpeedSync()
+                && custom && !canInstantBreak && this.gameMode() == GameMode.SURVIVAL;
+    }
+
+    private void updateMiningAim(Object serverPlayer) {
+        if (!Config.preemptiveMiningSpeedSync()) {
+            if (this.miningAimOwnsSuppression && !this.isDestroyingCustomBlock) {
+                this.setClientSideCanBreakBlock(true);
+            }
+            if (this.miningAimLevel != null || this.miningAimOwnsSuppression) {
+                this.miningAimOwnsSuppression = false;
+                this.miningAimEye = null;
+                this.miningAimLevel = null;
+                this.miningAimTool = null;
+            }
+            return;
+        }
+        if (!VersionHelper.isOrAbove1_20_5 || this.isFakePlayer() || this.gameEdition() != GameEdition.JAVA
+                || (!this.clientSideCanBreak && !this.miningAimOwnsSuppression)
+                || this.lastSuccessfulBreak == this.gameTicks) {
+            return;
+        }
+        if (this.gameMode() != GameMode.SURVIVAL) {
+            if (this.miningAimOwnsSuppression) {
+                this.setClientSideCanBreakBlock(true);
+            }
+            this.miningAimEye = null;
+            return;
+        }
+
+        Object level = EntityProxy.INSTANCE.getLevel(serverPlayer);
+        Object tool = LivingEntityProxy.INSTANCE.getItemBySlot(serverPlayer, EquipmentSlotProxy.MAINHAND);
+        float yaw = EntityProxy.INSTANCE.getYRot(serverPlayer);
+        float pitch = EntityProxy.INSTANCE.getXRot(serverPlayer);
+        double range = this.getCachedInteractionRange();
+        // Refresh stationary targets for block and mining-speed changes without tracking their mutations.
+        if ((this.gameTicks + this.entityId()) % 5 != 0 && level == this.miningAimLevel && tool == this.miningAimTool
+                && this.eyeLocation.equals(this.miningAimEye) && yaw == this.miningAimYaw
+                && pitch == this.miningAimPitch && range == this.miningAimRange
+                && this.clientSideCanBreak == this.miningAimCanBreak && this.miningTickHit == null) {
+            return;
+        }
+        this.miningAimLevel = level;
+        this.miningAimTool = tool;
+        this.miningAimEye = this.eyeLocation;
+        this.miningAimYaw = yaw;
+        this.miningAimPitch = pitch;
+        this.miningAimRange = range;
+
+        Object hit = this.miningTickHit;
+        if (hit == null && this.canTraceMiningAim(level, range)) {
+            hit = this.rayTrace(serverPlayer, range);
+        }
+        if (hit == null && this.isDestroyingCustomBlock) {
+            return;
+        }
+        boolean canBreak = true;
+        if (hit != null && !BlockHitResultProxy.INSTANCE.isMiss(hit)) {
+            Object target = BlockHitResultProxy.INSTANCE.getBlockPos(hit);
+            BlockPos pos = LocationUtils.fromBlockPos(target);
+            if (this.isDestroyingCustomBlock && this.miningAimOwnsSuppression && pos.equals(this.destroyPos)) {
+                return;
+            }
+            Object state = BlockGetterProxy.INSTANCE.getBlockState(level, target);
+            if (BlockStateUtils.getNullableCustomBlockState(state) != null
+                    && !MinecraftServerProxy.INSTANCE.isUnderSpawnProtection(MinecraftServerProxy.INSTANCE.getServer(), level, target, serverPlayer)) {
+                canBreak = this.getDestroyProgress(state, pos) >= 1f;
+            }
+        }
+        this.miningAimCanBreak = canBreak;
+        if (this.clientSideCanBreak != canBreak) {
+            this.setClientSideCanBreakBlock(canBreak);
+            this.miningAimOwnsSuppression = !canBreak;
+        }
+    }
+
+    private boolean canTraceMiningAim(Object level, double range) {
+        CEWorld storage = BukkitWorldManager.instance().getStorageWorld(this.platformPlayer().getWorld());
+        if (storage == null) {
+            return false;
+        }
+        Vec3d eye = this.eyeLocation;
+        int minX = MiscUtils.floor(eye.x - range) >> 4;
+        int maxX = MiscUtils.floor(eye.x + range) >> 4;
+        int minY = MiscUtils.floor(eye.y - range) >> 4;
+        int maxY = MiscUtils.floor(eye.y + range) >> 4;
+        int minZ = MiscUtils.floor(eye.z - range) >> 4;
+        int maxZ = MiscUtils.floor(eye.z + range) >> 4;
+        boolean hasCustomBlocks = false;
+        for (int x = minX; x <= maxX && !hasCustomBlocks; x++) {
+            for (int z = minZ; z <= maxZ && !hasCustomBlocks; z++) {
+                CEChunk chunk = storage.getChunkAtIfLoaded(x, z);
+                if (chunk == null) {
+                    continue;
+                }
+                CESection[] sections = chunk.sections();
+                int minSection = Math.max(0, chunk.sectionIndex(minY));
+                int maxSection = Math.min(sections.length - 1, chunk.sectionIndex(maxY));
+                for (int sectionIndex = minSection; sectionIndex <= maxSection; sectionIndex++) {
+                    CESection section = sections[sectionIndex];
+                    if (section != null && !section.isEmpty()) {
+                        hasCustomBlocks = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if (!hasCustomBlocks) {
+            return false;
+        }
+        if (VersionHelper.hasFoliaPatch) {
+            Object bounds = AABBProxy.INSTANCE.newInstance(eye.x - range, eye.y - range, eye.z - range, eye.x + range, eye.y + range, eye.z + range);
+            if (!(VersionHelper.isOrAbove1_21 ? TickThreadProxy.INSTANCE.isTickThreadFor$1(level, bounds) : TickThreadProxy.INSTANCE.isTickThreadFor$0(level, bounds))) {
+                return false;
+            }
+        }
+        Object chunkSource = ServerLevelProxy.INSTANCE.getChunkSource(level);
+        for (int x = minX; x <= maxX; x++) {
+            for (int z = minZ; z <= maxZ; z++) {
+                if (LevelUtils.getChunkAtIfLoaded(chunkSource, x, z) == null) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     @Override
@@ -1111,6 +1254,7 @@ public class BukkitServerPlayer extends BukkitLivingEntity implements Player {
 
         // 进行实现追踪找到指向的方块
         Object hitResult = rayTrace(serverPlayer, getCachedInteractionRange());
+        this.miningTickHit = hitResult;
         if (BlockHitResultProxy.INSTANCE.isMiss(hitResult)) return;
         Object blockPos = BlockHitResultProxy.INSTANCE.getBlockPos(hitResult);
         BlockPos hitPos = LocationUtils.fromBlockPos(blockPos);

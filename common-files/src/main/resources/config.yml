@@ -390,6 +390,10 @@ block:
     # If set to empty, the plugin will set an empty sound list, but at the cost of some warning logs appearing on the client side
     silent-sound-path: "internal/silence.ogg"
 
+  # Sync client mining speed when a Java survival player aims at a timed custom block.
+  # Reduces crack-stage jumps on Minecraft 1.20.5 and later at the cost of extra target checks.
+  preemptive-mining-speed-sync: false
+
   # Adventure mode requires correct tools to break blocks.
   # While vanilla clients cannot recognize custom block IDs (e.g., craftengine:custom_100).
   # When enabled, tools that can break vanilla equivalents also break custom variants.
