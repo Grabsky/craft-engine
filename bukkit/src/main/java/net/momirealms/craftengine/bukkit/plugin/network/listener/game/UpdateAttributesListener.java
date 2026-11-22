@@ -45,7 +45,23 @@ public final class UpdateAttributesListener implements ByteBufferPacketListener 
             double baseValue = buf.readDouble();
 
             int modifierCount = buf.readVarInt();
-            List<AttributeModifier> modifiers;
+            List<AttributeModifier> modifiers = new ArrayList<>(modifierCount);
+            if (VersionHelper.isOrAbove1_21) {
+                for (int j = 0; j < modifierCount; j++) {
+                    Key modifierName = buf.readKey();
+                    double modifierValue = buf.readDouble();
+                    byte operation = buf.readByte();
+                    modifiers.add(new AttributeModifier1_21(modifierName, modifierValue, operation));
+                }
+            } else {
+                for (int j = 0; j < modifierCount; j++) {
+                    UUID uuid = buf.readUUID();
+                    double modifierValue = buf.readDouble();
+                    byte operation = buf.readByte();
+                    modifiers.add(new AttributeModifier1_20_5(uuid, modifierValue, operation));
+                }
+            }
+
             if (attributeId == BLOCK_BREAK_SPEED && !player.clientSideCanBreak()) {
                 modifiers = List.of(VersionHelper.isOrAbove1_21 ?
                         new AttributeModifier1_21(Key.ce("custom_hardness"), -999d, (byte) 0) :
@@ -53,33 +69,15 @@ public final class UpdateAttributesListener implements ByteBufferPacketListener 
                 );
                 baseValue = 0;
                 changed = true;
-            } else {
-                modifiers = new ArrayList<>(modifierCount);
-                if (VersionHelper.isOrAbove1_21) {
-                    for (int j = 0; j < modifierCount; j++) {
-                        Key modifierName = buf.readKey();
-                        double modifierValue = buf.readDouble();
-                        byte operation = buf.readByte();
-                        modifiers.add(new AttributeModifier1_21(modifierName, modifierValue, operation));
-                    }
-                } else {
-                    for (int j = 0; j < modifierCount; j++) {
-                        UUID uuid = buf.readUUID();
-                        double modifierValue = buf.readDouble();
-                        byte operation = buf.readByte();
-                        modifiers.add(new AttributeModifier1_20_5(uuid, modifierValue, operation));
-                    }
-                }
-                if (attributeId == MAX_HEALTH && Config.enableHealthScaling()) {
-                    // 按原版运算规则从包内 base+修饰符算出客户端可见的血量上限
-                    double finalMaxHealth = computeFinalValue(baseValue, modifiers);
-                    serverPlayer.setClientSideMaxHealth(finalMaxHealth);
-                    if (finalMaxHealth > Config.healthScalingThreshold()) {
-                        // 血条上限固定为视觉上限，修饰符清空避免客户端自行算出真实值
-                        baseValue = Config.healthScalingVisualMaxHealth();
-                        modifiers = List.of();
-                        changed = true;
-                    }
+            } else if (attributeId == MAX_HEALTH && Config.enableHealthScaling()) {
+                // 按原版运算规则从包内 base+修饰符算出客户端可见的血量上限
+                double finalMaxHealth = computeFinalValue(baseValue, modifiers);
+                serverPlayer.setClientSideMaxHealth(finalMaxHealth);
+                if (finalMaxHealth > Config.healthScalingThreshold()) {
+                    // 血条上限固定为视觉上限，修饰符清空避免客户端自行算出真实值
+                    baseValue = Config.healthScalingVisualMaxHealth();
+                    modifiers = List.of();
+                    changed = true;
                 }
             }
             attributeSnapshots.add(new AttributeSnapshot(attributeId, baseValue, modifiers));
