@@ -26,6 +26,7 @@ import net.momirealms.craftengine.bukkit.plugin.gui.CraftEngineGUIHolder;
 import net.momirealms.craftengine.bukkit.plugin.network.BukkitNetworkManager;
 import net.momirealms.craftengine.bukkit.plugin.network.EquipmentLodTracker;
 import net.momirealms.craftengine.bukkit.plugin.network.handler.SelfPlayerPacketHandler;
+import net.momirealms.craftengine.bukkit.plugin.network.listener.game.PlayerActionListener;
 import net.momirealms.craftengine.bukkit.util.*;
 import net.momirealms.craftengine.bukkit.world.BukkitContainer;
 import net.momirealms.craftengine.bukkit.world.WorldlyContainerHolder;
@@ -1186,6 +1187,9 @@ public class BukkitServerPlayer extends BukkitLivingEntity implements Player {
                     }
                     // send break particle + (removed sounds)
                     if (breakResult) {
+                        if (!this.canInstabuild()) {
+                            PlayerActionListener.startMiningCooldown(this);
+                        }
                         sendPacket(ClientboundLevelEventPacketProxy.INSTANCE.newInstance(WorldEvents.BLOCK_BREAK_EFFECT, blockPos, customState.customBlockState().registryId(), false), false);
                         clearActiveDestroyProgress(true);
                         this.destroyPos = null;
